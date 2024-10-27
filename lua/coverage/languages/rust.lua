@@ -4,10 +4,18 @@ local Path = require("plenary.path")
 local config = require("coverage.config")
 local signs = require("coverage.signs")
 local util = require("coverage.util")
+local common = require("coverage.languages.common")
 
 --- Returns a list of signs to be placed.
 -- @param json_data from the generated report
 M.sign_list = function(json_data)
+    local rust_config = config.opts.lang.rust
+    local filepath = rust_config.coverage_file
+    local is_empty = filepath == nil or filepath == ""
+    if not is_empty then
+        return common.sign_list(json_data)
+    end
+
     local sign_list = {}
     for _, file in ipairs(json_data.source_files) do
         local fname = Path:new(file.name):make_relative()
@@ -29,6 +37,12 @@ end
 
 --- Returns a summary report.
 M.summary = function(json_data)
+    local rust_config = config.opts.lang.rust
+    local filepath = rust_config.coverage_file
+    local is_empty = filepath == nil or filepath == ""
+    if not is_empty then
+        return common.summary(json_data)
+    end
     local totals = {
         statements = 0,
         missing = 0,
@@ -73,9 +87,9 @@ M.summary = function(json_data)
         })
     end
     totals.coverage = (
-        (totals.statements + totals.branches - totals.missing - totals.partial)
-            / (totals.statements + totals.branches)
-        ) * 100.0
+    (totals.statements + totals.branches - totals.missing - totals.partial)
+    / (totals.statements + totals.branches)
+) * 100.0
     return {
         files = files,
         totals = totals,
@@ -115,11 +129,29 @@ M.load = function(callback)
             end
         end),
         on_exit = vim.schedule_wrap(function()
-            if #stderr > 0 then
-                vim.notify(stderr, vim.log.levels.ERROR)
+            local filepath = rust_config.coverage_file
+            local is_empty = filepath == nil or filepath == ""
+            if is_empty then
+                if #stderr > 0 then
+                    vim.notify(stderr, vim.log.levels.ERROR)
+                    return
+                end
+                util.safe_decode(stdout, callback)
                 return
             end
-            util.safe_decode(stdout, callback)
+
+            local file = io.open(filepath, "r")
+            if not file then
+                vim.notify("coverage file does not exist", vim.log.levels.ERROR)
+                return
+            end
+            file:close()
+            local p = Path:new(util.get_coverage_file(filepath))
+            if not p:exists() then
+                vim.notify("No coverage file exists.", vim.log.levels.INFO)
+            end
+
+            callback(util.lcov_to_table(p))
         end),
     })
 end
